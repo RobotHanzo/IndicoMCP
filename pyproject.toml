@@ -1,0 +1,31 @@
+[build-system]
+requires = ['hatchling>=1.27,<2']
+build-backend = 'hatchling.build'
+
+[project]
+name = 'indico-plugin-mcp'
+version = '0.1.0'
+description = 'Permission-aware Model Context Protocol tools for Indico and STSA plugins'
+readme = 'README.md'
+requires-python = '>=3.12.2,<3.13'
+dependencies = ['indico>=3.3.14,<3.4', 'pydantic>=2.10,<3']
+
+[project.optional-dependencies]
+dev = ['pytest>=8', 'ruff>=0.9']
+
+[project.entry-points.'indico.plugins']
+mcp = 'indico_mcp.plugin:MCPPlugin'
+
+[tool.hatch.build.targets.wheel]
+packages = ['indico_mcp']
+
+[tool.pytest.ini_options]
+testpaths = ['tests']
+addopts = '-p no:indico'
+
+[tool.ruff]
+line-length = 120
+target-version = 'py312'
+
+[tool.ruff.lint]
+select = ['E', 'F', 'I']
