@@ -1,0 +1,44 @@
+{% from '_clipboard_input.html' import clipboard_input %}
+
+<div class="i-box-group vert">
+    <div class="i-box">
+        <div class="i-box-header">
+            <div class="i-box-title">{% trans %}Connect an MCP client{% endtrans %}</div>
+        </div>
+        <div class="i-box-content">
+            <p>{% trans %}Choose Streamable HTTP in your MCP client and use this server URL.{% endtrans %}</p>
+            {{ clipboard_input(server_url, title=_('Copy server URL to clipboard')) }}
+            <p>
+                {% trans %}Add your token to the client’s credentials and send it in the Authorization header.{% endtrans %}
+                <code>Authorization: Bearer &lt;token&gt;</code>
+            </p>
+            <p>
+                {% trans -%}
+                    Generate a token for your signed-in account. Use read-only access for discovery and lookups.
+                    Read/write access allows the client to change data within your Indico permissions.
+                {%- endtrans %}
+            </p>
+            <div class="toolbar">
+                <div class="group">
+                    <button type="button" class="i-button highlight"
+                            data-href="{{ create_token_url }}" data-method="POST"
+                            data-params="{{ {'access': 'read-only'} | tojson | forceescape }}"
+                            data-title="{{ _('New MCP token') }}" data-ajax-dialog data-close-button>
+                        {%- trans %}Generate read-only token{% endtrans -%}
+                    </button>
+                    <button type="button" class="i-button"
+                            data-href="{{ create_token_url }}" data-method="POST"
+                            data-params="{{ {'access': 'read-write'} | tojson | forceescape }}"
+                            data-title="{{ _('New MCP token') }}" data-ajax-dialog data-close-button>
+                        {%- trans %}Generate read/write token{% endtrans -%}
+                    </button>
+                </div>
+                <div class="group">
+                    <a href="{{ manage_tokens_url }}" class="i-button">
+                        {%- trans %}Manage my API tokens{% endtrans -%}
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

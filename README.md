@@ -20,6 +20,8 @@ The optional plugins must be installed, migrated, and configured through their o
 
 ## Connect an agent
 
+Administrators can open **Administration → Plugins → Indico MCP** to copy the server URL and generate a read-only or read/write token for their signed-in account. Copy the token from the dialog when it appears. You can rename, reset, or revoke it later in **API Tokens**.
+
 1. In the Indico account that will perform the work, open **API Tokens** and create a dedicated token. Select **Read Indico data through MCP** (`read:mcp`). Add **Perform Indico actions through MCP** (`write:mcp`) for agents that need writes. If token management is restricted, an Indico administrator can assign the scopes.
 2. Configure the client with the **Streamable HTTP** URL `https://indico.example.org/mcp`. Include the installation prefix if Indico lives under a subpath. Supply the token through the client's secret store as `Authorization: Bearer <token>`.
 3. Use `tools/list` to discover the available tools and `tools/call` to invoke them. Begin with the read tools to find record IDs and validate the intended changes.

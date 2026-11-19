@@ -1,0 +1,10 @@
+{% from '_clipboard_input.html' import clipboard_input %}
+{% from 'message_box.html' import message_box %}
+
+{% call message_box('success') %}
+    {% trans name=token_name %}Created {{ name }}. Copy the token now. Indico shows it only once.{% endtrans %}
+{% endcall %}
+{{ clipboard_input(access_token, title=_('Copy MCP token to clipboard')) }}
+<p>
+    <a href="{{ manage_tokens_url }}">{% trans %}Manage my API tokens{% endtrans %}</a>
+</p>

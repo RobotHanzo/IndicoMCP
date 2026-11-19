@@ -21,9 +21,18 @@ class MCPPlugin(IndicoPlugin):
     Expose Model Context Protocol tools for Indico and supported active plugins.
     """
 
+    configurable = True
+
     def init(self):
         super().init()
         self.connect(signals.core.app_created, self._configure_app)
+        self.template_hook('plugin-details', self._render_setup)
+
+    def _render_setup(self, plugin, **kwargs):
+        if plugin.name == self.name:
+            from indico_mcp.admin import render_setup
+
+            return render_setup()
 
     def get_blueprints(self):
         from indico_mcp.endpoint import blueprint

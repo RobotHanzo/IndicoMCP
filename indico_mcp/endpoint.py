@@ -12,11 +12,13 @@ from indico.web.rh import RH
 from indico.web.util import get_request_user
 from werkzeug.exceptions import HTTPException, Unauthorized
 
+from indico_mcp.admin import RHCreateMCPToken
 from indico_mcp.plugin import EXTENSION_NAME, READ_SCOPE, WRITE_SCOPE
 from indico_mcp.protocol import dispatch, rpc_error
 from indico_mcp.registry import ToolError
 
 blueprint = IndicoPluginBlueprint('mcp', __name__)
+blueprint.add_url_rule('!/admin/plugins/mcp/token', 'create_token', RHCreateMCPToken, methods=('POST',))
 MAX_REQUEST_BYTES = 1024 * 1024
 
 
@@ -121,9 +123,13 @@ def _protect_response(response):
     return response
 
 
+@blueprint.before_request
+def _protect_request_trace():
+    sentry_sdk.get_isolation_scope().add_event_processor(_scrub_mcp_event)
+
+
 @blueprint.route('!/mcp', methods=('GET', 'POST', 'DELETE'), provide_automatic_options=False)
 def mcp_endpoint():
-    sentry_sdk.get_isolation_scope().add_event_processor(_scrub_mcp_event)
     base_url = urlsplit(config.BASE_URL)
     origin = request.headers.get('Origin')
     if origin is not None and origin != f'{base_url.scheme}://{base_url.netloc}':
