@@ -81,3 +81,37 @@ def test_survey_draft_to_anonymous_submission(indico_app, token, public_event):
     _call(client, participant, 'indico_submit_survey', **form, answers=answers, error=True)
     responses = _call(client, manager, 'indico_list_survey_submissions', **form)['items']
     assert len(responses) == 1 and responses[0]['user_id'] is None
+
+
+def test_survey_choice_questions_take_plain_options_and_reject_malformed_config(indico_app, token, public_event):
+    client = indico_app.test_client()
+    manager = token['manager']
+    event_id = public_event[1]['id']
+
+    _call(client, manager, 'indico_set_event_feature', event_id=event_id, name='surveys', enabled=True)
+    survey = _call(client, manager, 'indico_create_survey', event_id=event_id, title='Choices')
+    question = {'event_id': event_id, 'survey_id': survey['id'], 'section_id': survey['section_id'],
+                'field_type': 'single_choice', 'title': 'Attending?'}
+
+    plain = _call(client, manager, 'indico_add_survey_question', **question, config={
+        'display_type': 'select', 'options': ['Yes', 'No'],
+    })
+    assert [option['option'] for option in plain['config']['options']] == ['Yes', 'No']
+    assert len({option['id'] for option in plain['config']['options']}) == 2
+    native = _call(client, manager, 'indico_add_survey_question', **question, config={
+        'display_type': 'select', 'options': '[{"option": "Maybe"}, {"option": "Later"}]',
+    })
+    assert [option['option'] for option in native['config']['options']] == ['Maybe', 'Later']
+
+    for options in ([], ['Yes', 'Yes'], [''], '[{"label": "Yes"}]', '[1, 2]'):
+        rejected = _call(client, manager, 'indico_add_survey_question', **question, error=True,
+                         config={'display_type': 'select', 'options': options})
+        assert 'options' in rejected['error']
+    missing = _call(client, manager, 'indico_add_survey_question', **question, error=True,
+                    config={'display_type': 'select'})
+    assert 'options' in missing['error']
+    unknown = _call(client, manager, 'indico_add_survey_question', **question, error=True, config={'choices': 'Yes'})
+    assert unknown['error'] == 'One or more configuration keys are unavailable for this question type.'
+    survey_questions = _call(client, manager, 'indico_get_survey', event_id=event_id, survey_id=survey['id'],
+                             management=True)['sections'][0]['items']
+    assert [item['id'] for item in survey_questions] == [plain['id'], native['id']]

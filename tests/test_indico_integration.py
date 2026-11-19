@@ -1,5 +1,7 @@
 """Run against a fresh database on INDICO_MCP_TEST_POSTGRES (a PostgreSQL maintenance DSN)."""
 
+from uuid import UUID
+
 import pytest
 from integration_support import TEST_ALL_PLUGINS, TEST_GROUP_REGISTRATION, _call, _rpc
 from integration_support import pytestmark as pytestmark
@@ -73,6 +75,44 @@ def test_registration_persistence_and_participant_isolation(indico_app, token, p
     assert _call(client, token['other'], 'indico_get_registration', **form, error=True)['error'] == 'Not Found'
     assert _call(client, token['other'], 'indico_get_registration', **form, registration_id=registration['id'],
                  error=True)['error'] == 'Forbidden'
+
+
+def test_registration_choice_fields_name_new_choices_and_reject_malformed_ones(indico_app, token, public_event):
+    client = indico_app.test_client()
+    manager = token['manager']
+    form = _make_registration_form(client, manager, public_event[1]['id'], 'Meal form')
+    section = _call(client, manager, 'indico_create_registration_section', **form, title='Meals')
+    new_field = {**form, 'section_id': section['id'], 'input_type': 'single_choice', 'title': 'Meal'}
+    choices = [{'caption': 'Vegan', 'is_enabled': True}, {'caption': 'Halal', 'is_enabled': True}]
+
+    meal = _call(client, manager, 'indico_add_registration_field', **new_field,
+                 options={'item_type': 'dropdown', 'choices': choices})
+    saved = meal['field']['choices']
+    assert [choice['caption'] for choice in saved] == ['Vegan', 'Halal']
+    assert len({UUID(choice['id']) for choice in saved}) == 2
+
+    multi = _call(client, manager, 'indico_add_registration_field', **{**new_field, 'title': 'Snacks',
+                                                                       'input_type': 'multi_choice'},
+                  options={'choices': choices})
+    assert [choice['caption'] for choice in multi['field']['choices']] == ['Vegan', 'Halal']
+    defaulted = _call(client, manager, 'indico_add_registration_field', **{**new_field, 'title': 'Dessert'},
+                      options={'item_type': 'radiogroup', 'default_item': 'new:cake', 'choices': [
+                          {'id': 'new:cake', 'caption': 'Cake', 'is_enabled': True}, *choices]})
+    default_id = defaulted['field']['defaultItem']
+    assert [choice['id'] for choice in defaulted['field']['choices'] if choice['caption'] == 'Cake'] == [default_id]
+
+    for index, broken in enumerate(({'item_type': 'dropdown', 'choices': 'Vegan'},
+                                    {'item_type': 'dropdown', 'choices': ['Vegan']},
+                                    {'item_type': 'dropdown', 'choices': [{'id': 7, 'caption': 'Vegan',
+                                                                           'is_enabled': True}]})):
+        rejected = _call(client, manager, 'indico_add_registration_field', **{**new_field, 'title': f'Broken {index}'},
+                         options=broken, error=True)
+        assert rejected['error'] == 'The registration field settings are invalid.'
+        assert 'choices' in rejected['details']
+    view = _call(client, manager, 'indico_get_registration_form', **form, management=True)['form']
+    assert sorted(item['title'] for item in view['items'].values() if item['sectionId'] == section['id']) == [
+        'Dessert', 'Meal', 'Snacks',
+    ]
 
 
 def test_registration_field_rename_move_and_empty_section_cleanup(indico_app, token, public_event):

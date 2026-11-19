@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from flask import request
 from indico.core import signals
@@ -270,8 +270,29 @@ def _confirmed(confirm):
         raise BadRequest('Set confirm to true after reviewing the action.')
 
 
+def _name_new_choices(data):
+    """Give choices without an ID the temporary ID that the native editor sends for new ones.
+
+    Indico replaces ``new:`` IDs with UUIDs while it loads the field settings. Without an ID, its single-choice
+    default-item check raises ``KeyError``, and malformed choices break the loader before it can report them.
+    """
+    choices = data.get('choices')
+    if choices is None:
+        return
+    if not isinstance(choices, list) or not all(isinstance(choice, dict) for choice in choices):
+        raise ToolError('The registration field settings are invalid.',
+                        details={'choices': ['Provide a list of choice objects.']})
+    for choice in choices:
+        if choice.get('id') is None:
+            choice['id'] = f'new:{uuid4()}'
+        elif not isinstance(choice['id'], str):
+            raise ToolError('The registration field settings are invalid.',
+                            details={'choices': ['Choice IDs must be text.']})
+
+
 def _save_field(field, input_type, title, description, required, options):
     data = snakify_keys(options or {})
+    _name_new_choices(data)
     data.update(input_type=input_type, title=title.strip(), description=description, is_required=required)
     try:
         _fill_form_field_with_data(field, data)
@@ -690,7 +711,10 @@ def register_tools(registry):
     def indico_add_registration_field(user, event_id: ID, form_id: ID, section_id: ID, input_type: TITLE, title: TITLE,
                                       description: DESCRIPTION = '', required: bool = False,
                                       options: FORM_DATA | None = None):
-        """Add a field to a section. Supply type-specific options as accepted by the Indico form editor."""
+        """Add a field to a section. Supply type-specific options as accepted by the Indico form editor.
+
+        New choices may omit their id. Give one a temporary id such as "new:vegan" to refer to it in default_item.
+        """
         event = _event(event_id)
         _manager(user, event, write=True)
         form = _form(event, form_id, lock=True)

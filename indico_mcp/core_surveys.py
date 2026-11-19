@@ -1,5 +1,6 @@
 """Tools for creating, managing, and answering event surveys."""
 
+import json
 from secrets import compare_digest
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from indico.modules.events.surveys.operations import add_survey_question, add_su
 from indico.modules.events.surveys.util import make_survey_form, query_active_surveys, was_survey_submitted
 from indico.util.date_time import now_utc
 from indico.web.flask.util import url_for
+from indico.web.forms.fields import MultiStringField
 from pydantic import Field
 from werkzeug.datastructures import MultiDict
 from werkzeug.exceptions import BadRequest, Forbidden, NotFound
@@ -123,6 +125,29 @@ def _save_submission(survey, user, pending, form):
     submission.pending_answers = {}
     db.session.flush()
     return submission
+
+
+def _item_list_input(entry, value):
+    """Serialize a list of labels, or the native JSON list, as the JSON that an item-list field reads.
+
+    Indico's field assumes the editor sent a well-formed list: it raises ``TypeError``, ``KeyError`` or ``ValueError``
+    on a missing, plain-text or incomplete value instead of rejecting it, so only well-formed items reach it.
+    """
+    values = [value] if isinstance(value, str) else value
+    if len(values) == 1 and isinstance(values[0], str):
+        try:
+            parsed = json.loads(values[0])
+        except (ValueError, RecursionError):
+            parsed = None
+        if isinstance(parsed, list):
+            values = parsed
+    items = []
+    for item in values:
+        label = item.get(entry.field_name) if isinstance(item, dict) else item
+        if not isinstance(label, str):
+            raise BadRequest(f'Provide {entry.name} as a list of text values.')
+        items.append({entry.field_name: label})
+    return json.dumps(items)
 
 
 def _validate_title(event, title, survey_id=None):
@@ -255,7 +280,10 @@ def register_tools(registry):
     def indico_add_survey_question(user, event_id: ObjectID, survey_id: ObjectID, section_id: ObjectID,
                                    field_type: ShortText, title: Title, required: bool = False,
                                    description: Description = '', config: CustomFields | None = None):
-        """Add a question using the selected native question type and its form configuration fields."""
+        """Add a question using the selected native question type and its form configuration fields.
+
+        List the choices of single_choice and multiselect questions in config as options: ["Yes", "No"].
+        """
         event = _get_event(event_id, user, manage=True, unlock=True)
         survey = _get_survey(event, survey_id, lock=True)
         section = SurveySection.query.filter_by(survey_id=survey.id, id=section_id).first_or_404()
@@ -263,10 +291,14 @@ def register_tools(registry):
         if field is None:
             raise BadRequest('Choose a native question type from indico_list_survey_question_types.')
         options = config or {}
-        inputs = {**options, 'title': title, 'is_required': 'y' if required else '', 'description': description}
-        form = field.create_config_form(formdata=MultiDict(inputs), csrf_enabled=False)
-        if any(name not in form for name in inputs):
+        template = field.create_config_form(formdata=None, csrf_enabled=False)
+        if any(name not in template for name in options):
             raise BadRequest('One or more configuration keys are unavailable for this question type.')
+        inputs = {**options, 'title': title, 'is_required': 'y' if required else '', 'description': description}
+        for entry in template:
+            if isinstance(entry, MultiStringField):
+                inputs[entry.name] = _item_list_input(entry, options.get(entry.name, []))
+        form = field.create_config_form(formdata=MultiDict(inputs), csrf_enabled=False)
         if not form.validate():
             raise BadRequest('Invalid survey question configuration: ' + ', '.join(sorted(form.errors)))
         return _question_data(add_survey_question(section, field, form.data))
