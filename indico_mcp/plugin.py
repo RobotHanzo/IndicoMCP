@@ -25,7 +25,7 @@ class MCPPlugin(IndicoPlugin):
 
     configurable = True
     settings_form = OAuthSettingsForm
-    default_settings = {'oauth_callback_urls': [CLAUDE_CALLBACK], 'oauth_default_access': 'read-only'}
+    default_settings = {'oauth_callback_urls': [CLAUDE_CALLBACK], 'oauth_default_access': 'read-write'}
 
     def init(self):
         from indico.modules.oauth.controllers import RHOAuthAuthorize, RHOAuthMetadata, RHOAuthToken

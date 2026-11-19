@@ -47,8 +47,8 @@ def configure_oauth_access(indico_app, token):
 
 
 @pytest.mark.parametrize(('method', 'default_access', 'explicit_scope', 'approve_read_only'), [
+    ('client_secret_basic', None, None, False),
     ('none', 'read-only', None, False),
-    ('client_secret_basic', 'read-write', None, False),
     ('client_secret_post', 'read-only', 'read:mcp write:mcp', False),
     ('none', 'read-write', None, True),
     ('none', 'read-write', 'read:mcp', False),
@@ -57,8 +57,9 @@ def test_discover_register_authorize_exchange_and_call(indico_app, configure_oau
                                                       default_access, explicit_scope, approve_read_only):
     from lxml import html
 
-    configure_oauth_access(default_access)
-    default_scope = 'read:mcp write:mcp' if default_access == 'read-write' else 'read:mcp'
+    if default_access is not None:
+        configure_oauth_access(default_access)
+    default_scope = 'read:mcp' if default_access == 'read-only' else 'read:mcp write:mcp'
     requested_scope = explicit_scope or default_scope
     granted_scope = 'read:mcp' if approve_read_only else requested_scope
     agent = indico_app.test_client()
