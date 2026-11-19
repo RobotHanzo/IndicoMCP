@@ -8,6 +8,14 @@
         <div class="i-box-content">
             <p>{% trans %}Choose Streamable HTTP in your MCP client and use this server URL.{% endtrans %}</p>
             {{ clipboard_input(server_url, title=_('Copy server URL to clipboard')) }}
+            {% if automatic_registration %}
+                <p>
+                    {% trans -%}
+                        Add this server as a custom connector in Claude. Choose Register automatically under OAuth
+                        client, then sign in to Indico and authorize the connection.
+                    {%- endtrans %}
+                </p>
+            {% endif %}
             <p>
                 {% trans %}Add your token to the client’s credentials and send it in the Authorization header.{% endtrans %}
                 <code>Authorization: Bearer &lt;token&gt;</code>

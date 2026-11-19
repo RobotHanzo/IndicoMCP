@@ -1,4 +1,5 @@
 import os
+from uuid import uuid4
 
 import pytest
 
@@ -6,6 +7,20 @@ POSTGRES_URI = os.environ.get('INDICO_MCP_TEST_POSTGRES')
 TEST_ALL_PLUGINS = os.environ.get('INDICO_MCP_TEST_ALL_PLUGINS') == '1'
 TEST_GROUP_REGISTRATION = TEST_ALL_PLUGINS or os.environ.get('INDICO_MCP_TEST_GROUP_REGISTRATION') == '1'
 pytestmark = pytest.mark.skipif(not POSTGRES_URI, reason='Set INDICO_MCP_TEST_POSTGRES to a test PostgreSQL server')
+
+
+def signed_in_client(app, user_name):
+    from indico.modules.users import User
+
+    client = app.test_client()
+    csrf = str(uuid4())
+    with app.app_context():
+        user = User.query.filter_by(first_name=user_name).one()
+        user_id = user.id
+        with client.session_transaction() as browser_session:
+            browser_session.set_session_user(user)
+            browser_session['_csrf_token'] = csrf
+    return client, user_id, {'X-CSRF-Token': csrf, 'X-Requested-With': 'XMLHttpRequest'}
 
 
 def _rpc(client, token_value, method, params=None):

@@ -1,0 +1,31 @@
+{% extends 'layout/auth_base.html' %}
+
+{% block content %}
+    <div class="centered-column wide">
+        <img class="header-logo" src="{{ indico_config.IMAGES_BASE_URL }}/logo_indico.png" alt="Indico">
+        <div class="i-box app-auth-box">
+            <div class="app-auth-box-content">
+                <h2>{% trans %}Connect to Indico MCP{% endtrans %}</h2>
+                <p>
+                    {% trans connector=application.name, user=session.user.full_name -%}
+                        {{ connector }} is requesting access as {{ user }}.
+                    {%- endtrans %}
+                </p>
+                <ul>
+                    {% for scope in scopes %}
+                        <li>{{ scope }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+        <div class="button-wrapper">
+            <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                <button type="submit" name="confirm" value="1" class="i-button big highlight right">
+                    {%- trans %}Authorize{% endtrans -%}
+                </button>
+                <button type="submit" class="i-button big right">{% trans %}Cancel{% endtrans %}</button>
+            </form>
+        </div>
+    </div>
+{% endblock %}

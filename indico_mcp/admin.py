@@ -11,6 +11,7 @@ from indico.web.flask.util import url_for
 from indico.web.util import get_request_user, jsonify_data
 from werkzeug.exceptions import BadRequest, Forbidden
 
+from indico_mcp.oauth import automatic_registration_available, mcp_url
 from indico_mcp.plugin import READ_SCOPE, WRITE_SCOPE
 
 TOKEN_ACCESS = {
@@ -22,7 +23,8 @@ TOKEN_ACCESS = {
 def render_setup():
     return render_plugin_template(
         'setup.html',
-        server_url=url_for_plugin('mcp.mcp_endpoint', _external=True),
+        server_url=mcp_url(),
+        automatic_registration=automatic_registration_available(),
         create_token_url=url_for_plugin('mcp.create_token'),
         manage_tokens_url=url_for('oauth.user_tokens'),
     )

@@ -13,12 +13,17 @@ from indico.web.util import get_request_user
 from werkzeug.exceptions import HTTPException, Unauthorized
 
 from indico_mcp.admin import RHCreateMCPToken
+from indico_mcp.oauth import RHProtectedResourceMetadata, RHRegisterOAuthClient, add_discovery_challenge
 from indico_mcp.plugin import EXTENSION_NAME, READ_SCOPE, WRITE_SCOPE
 from indico_mcp.protocol import dispatch, rpc_error
 from indico_mcp.registry import ToolError
 
 blueprint = IndicoPluginBlueprint('mcp', __name__)
 blueprint.add_url_rule('!/admin/plugins/mcp/token', 'create_token', RHCreateMCPToken, methods=('POST',))
+blueprint.add_url_rule('!/.well-known/oauth-protected-resource/mcp', 'protected_resource_metadata',
+                       RHProtectedResourceMetadata)
+blueprint.add_url_rule('!/.well-known/oauth-protected-resource', 'root_resource_metadata', RHProtectedResourceMetadata)
+blueprint.add_url_rule('!/mcp/oauth/register', 'register_client', RHRegisterOAuthClient, methods=('POST',))
 MAX_REQUEST_BYTES = 1024 * 1024
 
 
@@ -120,6 +125,8 @@ class RHMCP(RH):
 def _protect_response(response):
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
+    if request.endpoint == 'plugin_mcp.mcp_endpoint' and response.status_code == 401:
+        add_discovery_challenge(response)
     return response
 
 

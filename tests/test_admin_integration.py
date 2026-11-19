@@ -1,38 +1,24 @@
 from hashlib import sha256
 from json import loads
-from uuid import uuid4
 
-from integration_support import _rpc
+from integration_support import _rpc, signed_in_client
 from integration_support import pytestmark as pytestmark
 
 SETUP_PAGE = '/admin/plugins/mcp/'
 CREATE_TOKEN = f'{SETUP_PAGE}token'
 
 
-def _signed_in_client(app, user_name):
-    from indico.modules.users import User
-
-    client = app.test_client()
-    csrf = str(uuid4())
-    with app.app_context():
-        user = User.query.filter_by(first_name=user_name).one()
-        user_id = user.id
-        with client.session_transaction() as browser_session:
-            browser_session.set_session_user(user)
-            browser_session['_csrf_token'] = csrf
-    return client, user_id, {'X-CSRF-Token': csrf, 'X-Requested-With': 'XMLHttpRequest'}
-
-
 def test_admin_page_issues_tokens_that_work_at_mcp_endpoint(indico_app, token):
     from indico.core.oauth.models.personal_tokens import PersonalToken
     from lxml import html
 
-    client, user_id, headers = _signed_in_client(indico_app, 'Manager')
+    client, user_id, headers = signed_in_client(indico_app, 'Manager')
     response = client.get(SETUP_PAGE)
     assert response.status_code == 200
     page = html.fromstring(response.data)
     assert page.xpath('//input[@readonly]/@value') == ['http://localhost/mcp']
     assert 'Streamable HTTP' in page.text_content()
+    assert 'Register automatically' in page.text_content()
     assert page.xpath('//a[@href="/user/tokens/"]')
     buttons = page.xpath('//button[@data-href=$url][@data-method="POST"][@data-ajax-dialog]', url=CREATE_TOKEN)
     assert [loads(button.get('data-params')) for button in buttons] == [
@@ -70,8 +56,8 @@ def test_token_creation_requires_admin_browser_session_and_csrf(indico_app, toke
     from indico.core.oauth.models.personal_tokens import PersonalToken
     from indico.modules.users import User
 
-    admin, _, headers = _signed_in_client(indico_app, 'Manager')
-    participant, _, participant_headers = _signed_in_client(indico_app, 'Participant')
+    admin, _, headers = signed_in_client(indico_app, 'Manager')
+    participant, _, participant_headers = signed_in_client(indico_app, 'Participant')
     data = {'access': 'read-write'}
     with indico_app.app_context():
         owner = User.query.filter_by(first_name='Manager').one()

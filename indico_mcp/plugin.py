@@ -8,6 +8,7 @@ from indico.core.plugins import IndicoPlugin, plugin_engine
 from indico.modules.oauth.forms import ApplicationForm, PersonalTokenForm
 from indico.util.i18n import _
 
+from indico_mcp.forms import CLAUDE_CALLBACK, OAuthSettingsForm
 from indico_mcp.registry import Registry
 
 READ_SCOPE = 'read:mcp'
@@ -22,10 +23,19 @@ class MCPPlugin(IndicoPlugin):
     """
 
     configurable = True
+    settings_form = OAuthSettingsForm
+    default_settings = {'oauth_callback_urls': [CLAUDE_CALLBACK]}
 
     def init(self):
+        from indico.modules.oauth.controllers import RHOAuthAuthorize, RHOAuthMetadata, RHOAuthToken
+
+        from indico_mcp import oauth
+
         super().init()
         self.connect(signals.core.app_created, self._configure_app)
+        self.connect(signals.rh.process, oauth.add_registration_endpoint, sender=RHOAuthMetadata)
+        self.connect(signals.rh.before_process, oauth.authorize_registered_client, sender=RHOAuthAuthorize)
+        self.connect(signals.rh.before_process, oauth.validate_registered_client_token_request, sender=RHOAuthToken)
         self.template_hook('plugin-details', self._render_setup)
 
     def _render_setup(self, plugin, **kwargs):

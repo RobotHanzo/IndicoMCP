@@ -4,21 +4,42 @@ Indico MCP gives AI agents typed tools for Indico event management and participa
 
 ## Install
 
-Install into an existing **Indico 3.3.14** environment running **Python 3.12**. The plugin has no database migrations of its own.
+Install into an existing **Indico 3.3.14** environment running **Python 3.12**.
 
 ```sh
 python -m pip install .
 ```
 
-Add `mcp` to `PLUGINS` in `indico.conf`, keep the existing entries, and restart the Indico web workers. A configuration with all supported optional plugins enabled looks like this.
+Add `mcp` to `PLUGINS` in `indico.conf` and keep the existing entries. A configuration with all supported optional plugins enabled looks like this.
 
 ```python
 PLUGINS = {'mcp', 'stsa', 'group_registration', 'sentry'}
 ```
 
+Run the MCP database migration on installation or when upgrading from a release without automatic OAuth registration, then restart the Indico web workers.
+
+```sh
+indico db --plugin mcp upgrade
+```
+
 The optional plugins must be installed, migrated, and configured through their own setup procedures. The adapters target the STSA directory's STSA 0.6.2, Group Registration 0.7.0, and Sentry 1.1.1. A core-only deployment uses `PLUGINS = {'mcp'}`. [Indico plugin installation documentation](https://docs.getindico.io/en/stable/installation/plugins/)
 
 ## Connect an agent
+
+### Automatic OAuth with Claude
+
+Add the public HTTPS server URL, such as `https://indico.example.org/mcp`, as a custom connector in Claude. Under **OAuth client**, choose **Register automatically**, then sign in to Indico and authorize the requested scopes. Claude’s callback URL is approved by default. [Claude custom connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp?rd=1)
+
+Administrators can add exact HTTPS callback URLs for other clients under **Administration → Plugins → Indico MCP**. Clearing the list disables automatic registration. Registered clients use authorization code with PKCE S256. Authorization defaults to `read:mcp`. Clients can request `write:mcp` when registering and authorizing. Revoke an existing OAuth connection under **Applications** in your Indico profile.
+
+For an Indico installation mounted below the site root, expose the well-known OAuth URLs through your reverse proxy. With `BASE_URL=https://indico.example.org/indico`, forward these requests internally and preserve the public origin. [MCP authorization discovery](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#authorization-server-discovery)
+
+| Public request path | Indico path |
+| --- | --- |
+| `/.well-known/oauth-authorization-server/indico` | `/indico/.well-known/oauth-authorization-server` |
+| `/.well-known/oauth-protected-resource/indico/mcp` | `/indico/.well-known/oauth-protected-resource/mcp` |
+
+### Bearer tokens
 
 Administrators can open **Administration → Plugins → Indico MCP** to copy the server URL and generate a read-only or read/write token for their signed-in account. Copy the token from the dialog when it appears. You can rename, reset, or revoke it later in **API Tokens**.
 
@@ -26,7 +47,7 @@ Administrators can open **Administration → Plugins → Indico MCP** to copy th
 2. Configure the client with the **Streamable HTTP** URL `https://indico.example.org/mcp`. Include the installation prefix if Indico lives under a subpath. Supply the token through the client's secret store as `Authorization: Bearer <token>`.
 3. Use `tools/list` to discover the available tools and `tools/call` to invoke them. Begin with the read tools to find record IDs and validate the intended changes.
 
-Indico personal API tokens and Indico OAuth user tokens with the MCP scopes are accepted. For OAuth, provision the Indico application and obtain the token using the deployment's existing OAuth flow. Configure the client to attach the bearer credential directly. The endpoint supports request-scoped JSON responses for MCP `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`. Browser requests that send an `Origin` must match the Indico installation origin. [Indico API token documentation](https://docs.getindico.io/en/stable/http-api/access/#api-token-authentication) · [MCP Streamable HTTP specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+Indico personal API tokens and Indico OAuth user tokens with the MCP scopes are accepted. Manually registered OAuth applications can also use Indico’s authorization and token endpoints. The endpoint supports request-scoped JSON responses for MCP `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`. Browser requests that send an `Origin` must match the Indico installation origin. [Indico API token documentation](https://docs.getindico.io/en/stable/http-api/access/#api-token-authentication) · [MCP Streamable HTTP specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
 
 Example with a legacy-protocol client. Set `INDICO_MCP_TOKEN` in your shell before running it.
 
