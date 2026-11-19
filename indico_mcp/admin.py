@@ -12,12 +12,7 @@ from indico.web.util import get_request_user, jsonify_data
 from werkzeug.exceptions import BadRequest, Forbidden
 
 from indico_mcp.oauth import automatic_registration_available, mcp_url
-from indico_mcp.plugin import READ_SCOPE, WRITE_SCOPE
-
-TOKEN_ACCESS = {
-    'read-only': (READ_SCOPE,),
-    'read-write': (READ_SCOPE, WRITE_SCOPE),
-}
+from indico_mcp.plugin import ACCESS_SCOPES
 
 
 def render_setup():
@@ -38,11 +33,11 @@ class RHCreateMCPToken(RHAdminBase):
 
     def _process_POST(self):
         access = request.form.get('access')
-        if access not in TOKEN_ACCESS:
+        if access not in ACCESS_SCOPES:
             raise BadRequest(_('Choose read-only or read/write access.'))
 
         user = session.user
-        token = PersonalToken(user=user, name=f'Indico MCP ({access}) {uuid4().hex[:12]}', scopes=TOKEN_ACCESS[access])
+        token = PersonalToken(user=user, name=f'Indico MCP ({access}) {uuid4().hex[:12]}', scopes=ACCESS_SCOPES[access])
         access_token = token.generate_token()
         db.session.add(token)
         db.session.flush()

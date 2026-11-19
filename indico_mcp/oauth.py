@@ -10,7 +10,7 @@ from indico.core.limiter import make_rate_limiter
 from indico.core.oauth.models.applications import OAuthApplication
 from indico.core.oauth.oauth2 import auth_server
 from indico.core.oauth.scopes import SCOPES
-from indico.core.plugins import current_plugin, render_plugin_template, url_for_plugin
+from indico.core.plugins import plugin_engine, render_plugin_template, url_for_plugin
 from indico.util.i18n import _
 from indico.web.flask.util import url_for
 from indico.web.rh import RH, cors, custom_auth, json_errors
@@ -18,10 +18,12 @@ from indico.web.util import get_request_user
 from werkzeug.exceptions import Forbidden, RequestEntityTooLarge
 
 from indico_mcp.models import OAuthClientRegistration
-from indico_mcp.plugin import READ_SCOPE, WRITE_SCOPE
+from indico_mcp.plugin import ACCESS_SCOPES, READ_SCOPE, WRITE_SCOPE
 
 MCP_SCOPES = frozenset({READ_SCOPE, WRITE_SCOPE})
 AUTH_METHODS = {'none', 'client_secret_basic', 'client_secret_post'}
+AUTHORIZATION_PARAMETERS = {'client_id', 'redirect_uri', 'response_type', 'state', 'resource',
+                            'code_challenge', 'code_challenge_method'}
 registration_rate = make_rate_limiter('mcp-client-registration', '10/minute')
 site_registration_rate = make_rate_limiter('mcp-client-registration-site', '100/minute', by_ip=False)
 
@@ -31,7 +33,11 @@ def mcp_url():
 
 
 def _callback_urls():
-    return current_plugin.settings.get('oauth_callback_urls')
+    return plugin_engine.get_plugin('mcp').settings.get('oauth_callback_urls')
+
+
+def _default_oauth_scopes():
+    return ACCESS_SCOPES[plugin_engine.get_plugin('mcp').settings.get('oauth_default_access')]
 
 
 def _registration_table_exists():
@@ -50,13 +56,21 @@ def add_registration_endpoint(sender, result, **kwargs):
         result.set_data(current_app.json.dumps(metadata))
 
 
+def _discovery_scopes():
+    scopes = _default_oauth_scopes()
+    if WRITE_SCOPE in scopes and not automatic_registration_available():
+        return (READ_SCOPE,)
+    return scopes
+
+
 def add_discovery_challenge(response):
     header = response.headers.get('WWW-Authenticate', 'Bearer')
     if header.lower().split(' ', 1)[0] != 'bearer':
         return
     metadata_url = url_for_plugin('mcp.protected_resource_metadata', _external=True)
     separator = ' ' if header.strip().lower() == 'bearer' else ', '
-    challenge = f'resource_metadata="{metadata_url}", scope="{READ_SCOPE}"'
+    scopes = ' '.join(_discovery_scopes())
+    challenge = f'resource_metadata="{metadata_url}", scope="{scopes}"'
     response.headers['WWW-Authenticate'] = f'{header}{separator}{challenge}'
 
 
@@ -69,7 +83,7 @@ def _oauth_error(error, description, status=400):
 class RHProtectedResourceMetadata(RH):
     def _process_GET(self):
         return jsonify(resource=mcp_url(), authorization_servers=[config.BASE_URL],
-                       bearer_methods_supported=['header'], scopes_supported=[READ_SCOPE, WRITE_SCOPE])
+                       bearer_methods_supported=['header'], scopes_supported=list(_discovery_scopes()))
 
 
 def _registration_metadata(data, allowed_urls):
@@ -87,7 +101,7 @@ def _registration_metadata(data, allowed_urls):
             or response_types != ['code']):
         return None, _oauth_error('invalid_client_metadata', _('Use the OAuth authorization code flow with PKCE.'))
 
-    scope = data.get('scope', READ_SCOPE)
+    scope = data.get('scope', ' '.join(_default_oauth_scopes()))
     if not isinstance(scope, str) or not set(scope.split()) <= MCP_SCOPES:
         return None, _oauth_error('invalid_client_metadata', _('Only MCP scopes can be registered.'))
 
@@ -172,6 +186,11 @@ def _is_callback(application, values):
     return len(redirects) == 1 and redirects[0] in application.redirect_uris and redirects[0] in _callback_urls()
 
 
+def _authorization_url(values, scope):
+    args = {key: value for key, value in values.items() if key in AUTHORIZATION_PARAMETERS}
+    return url_for('oauth.oauth_authorize', **args, scope=scope)
+
+
 def authorize_registered_client(sender, rh, **kwargs):
     values = request.values
     registration = _registered_client(values.getlist('client_id'))
@@ -194,11 +213,9 @@ def authorize_registered_client(sender, rh, **kwargs):
         return _oauth_error('invalid_request', _('A PKCE S256 challenge is required.'))
 
     if request.method == 'GET' and values.getlist('scope') in ([], ['']):
-        # Use a real OAuth request parameter so Indico stores and validates the default scope.
-        oauth_parameters = {'client_id', 'redirect_uri', 'response_type', 'state', 'resource',
-                            'code_challenge', 'code_challenge_method'}
-        args = {key: value for key, value in values.items() if key in oauth_parameters}
-        return redirect(url_for('oauth.oauth_authorize', **args, scope=READ_SCOPE))
+        # Keep the default within the scopes registered for this client.
+        default_scope = ' '.join(scope for scope in _default_oauth_scopes() if scope in app.allowed_scopes)
+        return redirect(_authorization_url(values, default_scope or READ_SCOPE))
     scope = set(values.get('scope', '').split())
     if len(values.getlist('scope')) != 1 or READ_SCOPE not in scope or not scope <= MCP_SCOPES:
         return _oauth_error('invalid_scope', _('Request read:mcp and, optionally, write:mcp.'))
@@ -210,7 +227,9 @@ def authorize_registered_client(sender, rh, **kwargs):
     if request.method == 'POST':
         user = session.user if 'confirm' in request.form else None
         return auth_server.create_authorization_response(grant_user=user, grant=grant)
-    return render_plugin_template('oauth_consent.html', application=app, scopes=[SCOPES[s] for s in sorted(scope)])
+    read_only_url = _authorization_url(values, READ_SCOPE) if WRITE_SCOPE in scope else None
+    return render_plugin_template('oauth_consent.html', application=app, scopes=[SCOPES[s] for s in sorted(scope)],
+                                  read_only_url=read_only_url)
 
 
 def validate_registered_client_token_request(sender, **kwargs):

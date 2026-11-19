@@ -30,7 +30,9 @@ The optional plugins must be installed, migrated, and configured through their o
 
 Add the public HTTPS server URL, such as `https://indico.example.org/mcp`, as a custom connector in Claude. Under **OAuth client**, choose **Register automatically**, then sign in to Indico and authorize the requested scopes. Claude’s callback URL is approved by default. [Claude custom connector setup](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp?rd=1)
 
-Administrators can add exact HTTPS callback URLs for other clients under **Administration → Plugins → Indico MCP**. Clearing the list disables automatic registration. Registered clients use authorization code with PKCE S256. Authorization defaults to `read:mcp`. Clients can request `write:mcp` when registering and authorizing. Revoke an existing OAuth connection under **Applications** in your Indico profile.
+Under **Administration → Plugins → Indico MCP**, set **Default access for automatic OAuth** to **Read-only** (`read:mcp`) or **Read/write** (`read:mcp write:mcp`). Clients that supply their own MCP scopes can request them explicitly during registration and authorization. When a connector requests write access, the Indico consent screen offers both **Authorize read/write** and **Authorize read-only**. Re-add an existing read-only connector to register it with the new default, then authorize it in Indico. Revoke old OAuth connections under **Applications** in your Indico profile.
+
+Administrators can add exact HTTPS callback URLs for other clients on the same plugin settings page. Clearing the list disables automatic registration. Registered clients use authorization code with PKCE S256.
 
 For an Indico installation mounted below the site root, expose the well-known OAuth URLs through your reverse proxy. With `BASE_URL=https://indico.example.org/indico`, forward these requests internally and preserve the public origin. [MCP authorization discovery](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#authorization-server-discovery)
 

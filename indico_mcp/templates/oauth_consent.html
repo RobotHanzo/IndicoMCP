@@ -22,8 +22,18 @@
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
                 <button type="submit" name="confirm" value="1" class="i-button big highlight right">
-                    {%- trans %}Authorize{% endtrans -%}
+                    {%- if read_only_url -%}
+                        {%- trans %}Authorize read/write{% endtrans -%}
+                    {%- else -%}
+                        {%- trans %}Authorize read-only{% endtrans -%}
+                    {%- endif -%}
                 </button>
+                {% if read_only_url %}
+                    <button type="submit" name="confirm" value="1" formaction="{{ read_only_url }}"
+                            class="i-button big right">
+                        {%- trans %}Authorize read-only{% endtrans -%}
+                    </button>
+                {% endif %}
                 <button type="submit" class="i-button big right">{% trans %}Cancel{% endtrans %}</button>
             </form>
         </div>

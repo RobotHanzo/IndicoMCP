@@ -13,6 +13,7 @@ from indico_mcp.registry import Registry
 
 READ_SCOPE = 'read:mcp'
 WRITE_SCOPE = 'write:mcp'
+ACCESS_SCOPES = {'read-only': (READ_SCOPE,), 'read-write': (READ_SCOPE, WRITE_SCOPE)}
 EXTENSION_NAME = 'indico_mcp'
 
 
@@ -24,7 +25,7 @@ class MCPPlugin(IndicoPlugin):
 
     configurable = True
     settings_form = OAuthSettingsForm
-    default_settings = {'oauth_callback_urls': [CLAUDE_CALLBACK]}
+    default_settings = {'oauth_callback_urls': [CLAUDE_CALLBACK], 'oauth_default_access': 'read-only'}
 
     def init(self):
         from indico.modules.oauth.controllers import RHOAuthAuthorize, RHOAuthMetadata, RHOAuthToken
