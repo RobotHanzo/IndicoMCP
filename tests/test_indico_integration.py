@@ -75,6 +75,61 @@ def test_registration_persistence_and_participant_isolation(indico_app, token, p
                  error=True)['error'] == 'Forbidden'
 
 
+def test_registration_field_rename_move_and_empty_section_cleanup(indico_app, token, public_event):
+    client = indico_app.test_client()
+    manager = token['manager']
+    participant = token['participant']
+    form = _make_registration_form(client, manager, public_event[1]['id'], 'Market survey')
+    original = _call(client, manager, 'indico_get_registration_form', **form, management=True)['form']
+    affiliation = next(item for item in original['items'].values() if item['htmlName'] == 'affiliation')
+    email = next(item for item in original['items'].values() if item['htmlName'] == 'email')
+    questions = _call(client, manager, 'indico_create_registration_section', **form, title='Survey questions')
+    old_section = _call(client, manager, 'indico_create_registration_section', **form, title='A. 基本資料')
+    status = _call(client, manager, 'indico_add_registration_field', **form, section_id=questions['id'],
+                   input_type='text', title='1. 目前身分')
+    next_question = _call(client, manager, 'indico_add_registration_field', **form, section_id=questions['id'],
+                          input_type='text', title='3. Comments')
+    dropdown = _call(client, manager, 'indico_add_registration_field', **form, section_id=old_section['id'],
+                     input_type='single_choice', title='2. 就讀學校', options={
+                         'item_type': 'dropdown',
+                         'choices': [{'id': 'new:school', 'caption': 'Example University', 'is_enabled': True}],
+                     })
+    _call(client, participant, 'indico_submit_registration', **form, values={
+        'first_name': 'Participant', 'last_name': 'Test', 'affiliation': 'Example University',
+    })
+    saved = _call(client, participant, 'indico_get_registration', **form)['values']['affiliation']
+    assert saved['text'] == 'Example University'
+
+    update = dict(field_id=affiliation['id'], title='2. 就讀學校', description='目前就讀／畢業學校')
+    denied = _call(client, participant, 'indico_update_registration_field', **form, **update, error=True)
+    assert denied['error'] == 'Forbidden'
+    renamed = _call(client, manager, 'indico_update_registration_field', **form, **update)['field']
+    assert renamed['title'] == update['title'] and renamed['description'] == update['description']
+    assert renamed['affiliationMode'] == affiliation['affiliationMode']
+    assert renamed['htmlName'] == 'affiliation' and renamed['fieldIsPersonalData']
+    required_field = _call(client, manager, 'indico_move_registration_field', **form, field_id=email['id'],
+                           after_field_id=status['id'], error=True)
+    assert required_field['error'] == 'Required personal data fields must stay in the built-in personal data section.'
+    move = dict(field_id=affiliation['id'], after_field_id=status['id'])
+    moved = _call(client, manager, 'indico_move_registration_field', **form, **move)
+    assert moved['field']['sectionId'] == questions['id'] and moved['field']['position'] == 2
+    assert _call(client, manager, 'indico_move_registration_field', **form, **move) == moved
+    for section in (questions, old_section):
+        nonempty = _call(client, manager, 'indico_delete_registration_section', **form, section_id=section['id'],
+                         confirm=True, error=True)
+        assert nonempty['error'] == 'Move or remove all items from this section before deleting it.'
+    _call(client, manager, 'indico_delete_registration_field', **form, field_id=dropdown['id'], confirm=True)
+    _call(client, manager, 'indico_delete_registration_section', **form, section_id=old_section['id'], confirm=True)
+
+    view = _call(client, participant, 'indico_get_registration_form', **form)['form']
+    assert str(old_section['id']) not in view['sections']
+    assert str(dropdown['id']) not in view['items']
+    question_ids = [item['id'] for item in sorted(view['items'].values(), key=lambda item: item['position'])
+                    if item['sectionId'] == questions['id']]
+    assert question_ids == [status['id'], affiliation['id'], next_question['id']]
+    assert _call(client, participant, 'indico_get_registration', **form)['values']['affiliation'] == saved
+
+
 @pytest.mark.skipif(not TEST_GROUP_REGISTRATION,
                     reason='Enable the installed Group Registration plugin to exercise its workflow')
 def test_group_fields_create_a_group_through_native_registration(indico_app, token, public_event):

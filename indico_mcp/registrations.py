@@ -18,7 +18,11 @@ from indico.modules.events.registration.fields import get_field_types
 from indico.modules.events.registration.models.form_fields import RegistrationFormField
 from indico.modules.events.registration.models.forms import ModificationMode, RegistrationForm
 from indico.modules.events.registration.models.invitations import InvitationState, RegistrationInvitation
-from indico.modules.events.registration.models.items import RegistrationFormItemType, RegistrationFormSection
+from indico.modules.events.registration.models.items import (
+    RegistrationFormItem,
+    RegistrationFormItemType,
+    RegistrationFormSection,
+)
 from indico.modules.events.registration.models.registrations import (
     PublishRegistrationsMode,
     Registration,
@@ -54,6 +58,7 @@ from indico_mcp.registry import ToolError
 
 ID = Annotated[int, Field(ge=1, le=2_147_483_647)]
 TITLE = Annotated[str, Field(min_length=1, max_length=200)]
+DESCRIPTION = Annotated[str, Field(max_length=10000)]
 FORM_DATA = Annotated[dict[str, object], Field(max_length=200)]
 PAGE_SIZE = Annotated[int, Field(ge=1, le=100)]
 PRICE = Annotated[str, Field(pattern=r'^\d{1,9}(\.\d{1,2})?$')]
@@ -81,6 +86,33 @@ def _form(event, form_id, *, lock=False):
     if (regform := query.one_or_none()) is None:
         raise NotFound
     return regform
+
+
+def _editable_form(user, event_id, form_id):
+    event = _event(event_id)
+    _manager(user, event, write=True)
+    form = _form(event, form_id, lock=True)
+    if form.is_purged:
+        raise Forbidden
+    return form
+
+
+def _form_field(form, field_id):
+    field = RegistrationFormField.query.filter_by(id=field_id, registration_form_id=form.id,
+                                                  is_deleted=False).one_or_none()
+    if field is None or field.parent.is_deleted:
+        raise NotFound
+    return field
+
+
+def _check_field_title(field, section, title):
+    if not title or '\0' in title:
+        raise BadRequest('Enter a nonblank field title.')
+    duplicates = (RegistrationFormItem.query.filter_by(parent_id=section.id, is_enabled=True, is_deleted=False)
+                  .filter(RegistrationFormItem.id != field.id,
+                          db.func.lower(RegistrationFormItem.title) == title.lower()))
+    if field.is_enabled and duplicates.has_rows():
+        raise BadRequest('There is already a field in this section with the same title.')
 
 
 def _registration_query(regform, manager=None):
@@ -619,8 +651,7 @@ def register_tools(registry):
 
     @registry.tool(read_only=False)
     def indico_create_registration_section(user, event_id: ID, form_id: ID, title: TITLE,
-                                           description: Annotated[str, Field(max_length=10000)] = '',
-                                           manager_only: bool = False):
+                                           description: DESCRIPTION = '', manager_only: bool = False):
         """Add a section for participant fields or manager-only fields to a registration form."""
         event = _event(event_id)
         _manager(user, event, write=True)
@@ -635,10 +666,30 @@ def register_tools(registry):
                     f'Section "{section.title}" in "{form.title}" added', user, data={'Manager-only': manager_only})
         return {'id': section.id, 'section': section.view_data}
 
+    @registry.tool(read_only=False, destructive=True)
+    def indico_delete_registration_section(user, event_id: ID, form_id: ID, section_id: ID, confirm: bool):
+        """Delete an empty custom registration section. Use indico_get_registration_form to find the section ID."""
+        _confirmed(confirm)
+        form = _editable_form(user, event_id, form_id)
+        section = next((section for section in form.sections if section.id == section_id and not section.is_deleted),
+                       None)
+        if section is None:
+            raise NotFound
+        if section.type == RegistrationFormItemType.section_pd:
+            raise BadRequest('The built-in personal data section cannot be removed.')
+        if any(not item.is_deleted for item in section.children):
+            raise BadRequest('Move or remove all items from this section before deleting it.')
+        section.is_deleted = True
+        update_regform_item_positions(form)
+        db.session.flush()
+        section.log(EventLogRealm.management, LogKind.negative, 'Registration',
+                    f'Section "{section.title}" in "{form.title}" deleted', user)
+        return {'id': section.id, 'deleted': True}
+
     @registry.tool(read_only=False)
     def indico_add_registration_field(user, event_id: ID, form_id: ID, section_id: ID, input_type: TITLE, title: TITLE,
-                                      description: Annotated[str, Field(max_length=10000)] = '',
-                                      required: bool = False, options: FORM_DATA | None = None):
+                                      description: DESCRIPTION = '', required: bool = False,
+                                      options: FORM_DATA | None = None):
         """Add a field to a section. Supply type-specific options as accepted by the Indico form editor."""
         event = _event(event_id)
         _manager(user, event, write=True)
@@ -657,6 +708,91 @@ def register_tools(registry):
                   f'Field "{field.title}" in "{form.title}" added', user, data={'Type': input_type})
         return {'id': field.id, 'name': field.html_field_name, 'field': field.view_data}
 
+    @registry.tool(read_only=False, idempotent=True)
+    def indico_update_registration_field(user, event_id: ID, form_id: ID, field_id: ID,
+                                         title: TITLE | None = None, description: DESCRIPTION | None = None):
+        """Edit the title or description of an existing field, including built-in fields such as Affiliation."""
+        form = _editable_form(user, event_id, form_id)
+        field = _form_field(form, field_id)
+        updates = {}
+        if title is not None:
+            title = title.strip()
+            _check_field_title(field, field.parent, title)
+            updates['title'] = title
+        if description is not None:
+            if '\0' in description:
+                raise BadRequest('The description contains an invalid character.')
+            updates['description'] = description
+        if not updates:
+            raise BadRequest('Supply a title or description to update.')
+        changes = field.populate_from_dict(updates)
+        if changes:
+            db.session.flush()
+            signals.event.registration_form_field_changed.send(field)
+            field.log(EventLogRealm.management, LogKind.change, 'Registration',
+                      f'Field "{field.title}" in "{form.title}" modified', user,
+                      data={'Changes': make_diff_log(changes, {
+                          'title': {'title': 'Title', 'type': 'string'}, 'description': {'title': 'Description'},
+                      })})
+        return {'id': field.id, 'name': field.html_field_name, 'field': field.view_data}
+
+    @registry.tool(read_only=False, idempotent=True)
+    def indico_move_registration_field(user, event_id: ID, form_id: ID, field_id: ID,
+                                       section_id: ID | None = None, after_field_id: ID | None = None):
+        """Move an enabled field after another form item, or to the start of a section.
+
+        With after_field_id, the destination defaults to that item's section. Without it, place the field first in
+        section_id or in its current section. Use indico_get_registration_form to find field and section IDs.
+        """
+        form = _editable_form(user, event_id, form_id)
+        field = _form_field(form, field_id)
+        if not field.is_active:
+            raise BadRequest('Only active fields can be moved.')
+        source_section, previous_position = field.parent, field.position
+        anchor = None
+        if after_field_id is not None:
+            if after_field_id == field_id:
+                raise BadRequest('Choose a different field to place this field after.')
+            anchor = next((item for item in form.form_items if item.id == after_field_id and not item.is_section
+                           and item.is_active), None)
+            if anchor is None:
+                raise NotFound
+            if section_id is not None and section_id != anchor.parent_id:
+                raise BadRequest('The anchor is in a different section from the specified destination.')
+            section_id = anchor.parent_id
+        section = source_section
+        if section_id is not None:
+            section = next((section for section in form.active_sections if section.id == section_id), None)
+            if section is None:
+                raise NotFound
+
+        changing_section = section != source_section
+        if changing_section:
+            if section.is_manager_only != source_section.is_manager_only:
+                raise BadRequest('The source and destination sections must have the same visibility.')
+            if (field.type == RegistrationFormItemType.field_pd and field.personal_data_type.is_required
+                    and section.type != RegistrationFormItemType.section_pd):
+                raise BadRequest('Required personal data fields must stay in the built-in personal data section.')
+            _check_field_title(field, section, field.title)
+
+        siblings = [item for item in section.children if item != field and item.is_active]
+        index = siblings.index(anchor) + 1 if anchor is not None else 0
+        if changing_section or previous_position != index + 1:
+            if changing_section:
+                source_items = [item for item in source_section.children if item != field and item.is_active]
+                for position, item in enumerate(source_items, 1):
+                    item.position = position
+                field.parent = section
+            siblings.insert(index, field)
+            for position, item in enumerate(siblings, 1):
+                item.position = position
+            db.session.flush()
+            field.log(EventLogRealm.management, LogKind.change, 'Registration',
+                      f'Field "{field.title}" in "{form.title}" moved', user,
+                      data={'Previous section ID': source_section.id, 'Previous position': previous_position,
+                            'Position': field.position})
+        return {'id': field.id, 'name': field.html_field_name, 'field': field.view_data}
+
     @registry.tool(read_only=False, destructive=True)
     def indico_delete_registration_field(user, event_id: ID, form_id: ID, field_id: ID, confirm: bool):
         """Remove a custom registration field that is unused as a condition for other fields."""
@@ -664,10 +800,7 @@ def register_tools(registry):
         event = _event(event_id)
         _manager(user, event, write=True)
         form = _form(event, form_id, lock=True)
-        field = next((item for item in form.form_items if item.id == field_id and item.is_field
-                      and not item.is_deleted and not item.parent.is_deleted), None)
-        if field is None:
-            raise NotFound
+        field = _form_field(form, field_id)
         if field.type == RegistrationFormItemType.field_pd or field.condition_for:
             raise BadRequest('A personal data field or a conditional dependency cannot be removed.')
         signals.event.registration_form_field_deleted.send(field)
